@@ -1,0 +1,201 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPU Scheduling Studio</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#eef2ff;font-family:Arial,sans-serif;padding:25px}
+.container{max-width:1100px;margin:auto}
+h1{color:#60a5fa;text-align:center}
+.subtitle{text-align:center;color:#a5b4fc}
+.card{background:#151e33;padding:20px;border-radius:14px;margin:18px 0}
+input,select,button{padding:11px;border-radius:7px;border:1px solid #394765;background:#202c45;color:white;margin:5px}
+button{background:#2563eb;cursor:pointer;font-weight:bold}
+button:hover{background:#1d4ed8}
+table{width:100%;border-collapse:collapse;margin-top:15px}
+th,td{padding:12px;text-align:center;border-bottom:1px solid #394765}
+th{color:#60a5fa}
+.gantt{display:flex;overflow-x:auto;margin:20px 0;padding-bottom:10px}
+.block{min-width:75px;padding:15px 8px;text-align:center;background:#2563eb;border-right:2px solid #0b1020;border-radius:5px}
+.idle{background:#64748b}
+.time{font-size:12px;color:#a5b4fc;margin-top:5px}
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.metric{background:#202c45;padding:15px;border-radius:9px;text-align:center}
+.metric strong{display:block;font-size:23px;color:#60a5fa;margin-top:8px}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+@media(max-width:600px){body{padding:10px}th,td{padding:7px;font-size:12px}}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>CPU Scheduling Studio</h1>
+<p class="subtitle">Interactive CPU Scheduling Algorithm Visualizer</p>
+
+<div class="card">
+<h2>Process Input</h2>
+<div class="actions">
+<input id="pid" placeholder="Process ID (P1)">
+<input id="arrival" type="number" min="0" placeholder="Arrival Time">
+<input id="burst" type="number" min="1" placeholder="Burst Time">
+<input id="priority" type="number" placeholder="Priority" value="1">
+<button onclick="addProcess()">Add Process</button>
+</div>
+<table>
+<thead><tr><th>Process</th><th>Arrival</th><th>Burst</th><th>Priority</th><th>Action</th></tr></thead>
+<tbody id="processRows"></tbody>
+</table>
+</div>
+
+<div class="card">
+<h2>Scheduling Configuration</h2>
+<div class="actions">
+<label>Algorithm:</label>
+<select id="algorithm">
+<option value="FCFS">FCFS</option>
+<option value="SJF">SJF (Non-preemptive)</option>
+<option value="Priority">Priority (Non-preemptive)</option>
+<option value="RR">Round Robin</option>
+</select>
+<label>Time Quantum:</label>
+<input id="quantum" type="number" value="2" min="1">
+<button onclick="runSchedule()">Run Schedule</button>
+<button onclick="compareAll()">Compare All Algorithms</button>
+<button onclick="resetAll()">Reset</button>
+</div>
+</div>
+
+<div class="card">
+<h2>Gantt Chart</h2>
+<div id="gantt" class="gantt">Run an algorithm to view the Gantt chart.</div>
+<h2>Performance Metrics</h2>
+<div class="metrics" id="metrics"></div>
+<h2>Process Results</h2>
+<div style="overflow-x:auto">
+<table>
+<thead><tr><th>Process</th><th>Start</th><th>Completion</th><th>Turnaround</th><th>Waiting</th><th>Response</th></tr></thead>
+<tbody id="results"></tbody>
+</table>
+</div>
+</div>
+
+<div class="card" id="comparison" style="display:none">
+<h2>Algorithm Comparison</h2>
+<div style="overflow-x:auto">
+<table>
+<thead><tr><th>Algorithm</th><th>Avg Waiting</th><th>Avg Turnaround</th><th>Avg Response</th><th>CPU Utilization</th><th>Makespan</th></tr></thead>
+<tbody id="compareRows"></tbody>
+</table>
+</div>
+</div>
+</div>
+
+<script>
+let processes=[];
+function addProcess(){
+ const id=document.getElementById('pid').value.trim();
+ const at=Number(document.getElementById('arrival').value);
+ const bt=Number(document.getElementById('burst').value);
+ const pr=Number(document.getElementById('priority').value);
+ if(!id||!Number.isInteger(at)||at<0||!Number.isInteger(bt)||bt<=0||!Number.isFinite(pr)||processes.some(p=>p.pid===id)){
+ alert("Enter a unique process ID, non-negative arrival, positive burst and valid priority.");return;
+ }
+ processes.push({pid:id,at,bt,pr});
+ renderProcesses();
+ document.getElementById('pid').value='';
+ document.getElementById('arrival').value='';
+ document.getElementById('burst').value='';
+}
+function renderProcesses(){
+ document.getElementById('processRows').innerHTML=processes.map((p,i)=>
+ `<tr><td>${p.pid}</td><td>${p.at}</td><td>${p.bt}</td><td>${p.pr}</td><td><button onclick="removeProcess(${i})">Remove</button></td></tr>`
+ ).join('');
+}
+function removeProcess(i){processes.splice(i,1);renderProcesses()}
+function simulate(algo){
+ if(!processes.length)throw Error("Add at least one process first.");
+ const quantum=Number(document.getElementById('quantum').value);
+ if(algo==='RR'&&(!Number.isInteger(quantum)||quantum<1))throw Error("Time quantum must be a positive integer.");
+ let segments=[],stats={},firstStarts={},time=0,done=new Set(),remaining={};
+ processes.forEach(p=>remaining[p.pid]=p.bt);
+ const add=(pid,start,end)=>{if(end>start)segments.push({pid,start,end})};
+ if(algo==='RR'){
+  let queue=[],arrived=new Set(),completed=new Set();
+  while(completed.size<processes.length){
+   processes.filter(p=>p.at<=time&&!arrived.has(p.pid)).sort((a,b)=>a.at-b.at).forEach(p=>{queue.push(p);arrived.add(p.pid)});
+   if(!queue.length){
+    let next=Math.min(...processes.filter(p=>!completed.has(p.pid)).map(p=>p.at));
+    add('IDLE',time,next);time=next;continue;
+   }
+   let p=queue.shift(),start=time; if(firstStarts[p.pid]===undefined)firstStarts[p.pid]=start;
+   let run=Math.min(quantum,remaining[p.pid]);
+   time+=run;remaining[p.pid]-=run;add(p.pid,start,time);
+   processes.filter(x=>x.at<=time&&!arrived.has(x.pid)).sort((a,b)=>a.at-b.at).forEach(x=>{queue.push(x);arrived.add(x.pid)});
+   if(remaining[p.pid]>0)queue.push(p);
+   else{completed.add(p.pid);stats[p.pid]={start:stats[p.pid]?.start??start,ct:time}}
+  }
+ }else{
+  while(done.size<processes.length){
+   let available=processes.filter(p=>!done.has(p.pid)&&p.at<=time);
+   if(!available.length){
+    let next=Math.min(...processes.filter(p=>!done.has(p.pid)).map(p=>p.at));
+    add('IDLE',time,next);time=next;continue;
+   }
+   available.sort((a,b)=>{
+    if(algo==='SJF')return a.bt-b.bt||a.at-b.at;
+    if(algo==='Priority')return a.pr-b.pr||a.at-b.at;
+    return a.at-b.at;
+   });
+   let p=available[0],start=time;
+   time+=p.bt;add(p.pid,start,time);
+   stats[p.pid]={start,ct:time};done.add(p.pid);
+  }
+ }
+ const rows=processes.map(p=>{
+  let s=stats[p.pid],tat=s.ct-p.at,wt=tat-p.bt;
+  return {pid:p.pid,start:s.start,ct:s.ct,tat,wt,rt:s.start-p.at,bt:p.bt};
+ });
+ let first=Math.min(...processes.map(p=>p.at)),end=time;
+ let busy=segments.filter(s=>s.pid!=='IDLE').reduce((a,s)=>a+s.end-s.start,0);
+ let n=rows.length;
+ return {segments,rows,avgWT:rows.reduce((a,r)=>a+r.wt,0)/n,avgTAT:rows.reduce((a,r)=>a+r.tat,0)/n,avgRT:rows.reduce((a,r)=>a+r.rt,0)/n,util:100*busy/(end-first),makespan:end-first};
+}
+function runSchedule(){
+ try{showResult(simulate(document.getElementById('algorithm').value));document.getElementById('comparison').style.display='none'}
+ catch(e){alert(e.message)}
+}
+function showResult(r){
+ document.getElementById('gantt').innerHTML=r.segments.map(s=>
+ `<div><div class="block ${s.pid==='IDLE'?'idle':''}">${s.pid}</div><div class="time">${s.start} → ${s.end}</div></div>`
+ ).join('');
+ document.getElementById('metrics').innerHTML=[
+ ['Average Waiting',r.avgWT.toFixed(2)],['Average Turnaround',r.avgTAT.toFixed(2)],
+ ['Average Response',r.avgRT.toFixed(2)],['CPU Utilization',r.util.toFixed(2)+'%'],
+ ['Makespan',r.makespan]
+ ].map(m=>`<div class="metric">${m[0]}<strong>${m[1]}</strong></div>`).join('');
+ document.getElementById('results').innerHTML=r.rows.map(x=>
+ `<tr><td>${x.pid}</td><td>${x.start}</td><td>${x.ct}</td><td>${x.tat}</td><td>${x.wt}</td><td>${x.rt}</td></tr>`
+ ).join('');
+}
+function compareAll(){
+ try{
+  let names=['FCFS','SJF','Priority','RR'];
+  let data=names.map(a=>({name:a,...simulate(a)}));
+  document.getElementById('compareRows').innerHTML=data.map(r=>
+  `<tr><td>${r.name}</td><td>${r.avgWT.toFixed(2)}</td><td>${r.avgTAT.toFixed(2)}</td><td>${r.avgRT.toFixed(2)}</td><td>${r.util.toFixed(2)}%</td><td>${r.makespan}</td></tr>`
+  ).join('');
+  document.getElementById('comparison').style.display='block';
+ }catch(e){alert(e.message)}
+}
+function resetAll(){
+ processes=[];renderProcesses();
+ document.getElementById('gantt').textContent='Run an algorithm to view the Gantt chart.';
+ document.getElementById('metrics').innerHTML='';
+ document.getElementById('results').innerHTML='';
+ document.getElementById('comparison').style.display='none';
+}
+</script>
+</body>
+</html>
